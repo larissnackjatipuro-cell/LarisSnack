@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useLapak } from '../context/LapakContext'
@@ -16,6 +17,7 @@ export default function Layout({ children }) {
   const { profile, logout } = useAuth()
   const { availableLapak, selectedLapakId, setSelectedLapakId } = useLapak()
   const navigate = useNavigate()
+  const [menuOpen, setMenuOpen] = useState(false)
 
   async function handleLogout() {
     await logout()
@@ -24,9 +26,27 @@ export default function Layout({ children }) {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <h1>Aktivitas Harian</h1>
-        <nav>
+      {/* Top bar hanya tampil di layar sempit (smartphone) — lihat index.css */}
+      <div className="mobile-topbar">
+        <button
+          className="hamburger-btn"
+          aria-label="Buka menu"
+          onClick={() => setMenuOpen(true)}
+        >
+          <span /><span /><span />
+        </button>
+        <span className="mobile-topbar-title">Aktivitas Harian</span>
+      </div>
+
+      {/* Overlay gelap di belakang sidebar saat menu mobile terbuka */}
+      {menuOpen && <div className="sidebar-overlay" onClick={() => setMenuOpen(false)} />}
+
+      <aside className={`sidebar ${menuOpen ? 'open' : ''}`}>
+        <div className="sidebar-header">
+          <h1>Aktivitas Harian</h1>
+          <button className="sidebar-close-btn" onClick={() => setMenuOpen(false)} aria-label="Tutup menu">✕</button>
+        </div>
+        <nav onClick={() => setMenuOpen(false)}>
           {navItems.map(item => (
             <NavLink key={item.to} to={item.to} end={item.end}>
               {item.label}
@@ -41,10 +61,9 @@ export default function Layout({ children }) {
             Masuk sebagai <strong>{profile?.name}</strong> ({profile?.role})
           </div>
           {availableLapak.length > 0 && (
-            <div>
+            <div className="lapak-picker">
               <label style={{ marginBottom: 0, display: 'inline', marginRight: 8 }}>Lapak:</label>
               <select
-                style={{ width: 200, display: 'inline-block', marginBottom: 0 }}
                 value={selectedLapakId}
                 onChange={e => setSelectedLapakId(e.target.value)}
               >
