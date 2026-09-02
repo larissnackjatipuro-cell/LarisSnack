@@ -98,6 +98,15 @@ function ProdusenTab() {
     await load()
   }
 
+  async function toggleProducerLapak(p, lapakId) {
+    const current = p.lapakIds || []
+    const next = current.includes(lapakId)
+      ? current.filter(id => id !== lapakId)
+      : [...current, lapakId]
+    await updateProducer(p.id, { lapakIds: next })
+    await load()
+  }
+
   return (
     <>
       <div className="card">
@@ -135,13 +144,28 @@ function ProdusenTab() {
       </div>
       <div className="card">
         <table>
-          <thead><tr><th>Nama</th><th>Telepon</th><th>Terdaftar di</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Nama</th><th>Telepon</th><th>Terdaftar di Lapak (klik untuk ubah)</th><th>Status</th><th></th></tr></thead>
           <tbody>
             {list.map(p => (
               <tr key={p.id}>
                 <td>{p.name}</td>
                 <td>{p.phone}</td>
-                <td>{(p.lapakIds || []).map(id => allLapak.find(l => l.id === id)?.name).filter(Boolean).join(', ') || '-'}</td>
+                <td>
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    {allLapak.map(l => (
+                      <label key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 4, fontWeight: 400, marginBottom: 0, fontSize: 13 }}>
+                        <input
+                          type="checkbox"
+                          style={{ width: 'auto', marginBottom: 0 }}
+                          checked={(p.lapakIds || []).includes(l.id)}
+                          onChange={() => toggleProducerLapak(p, l.id)}
+                        />
+                        {l.name}
+                      </label>
+                    ))}
+                    {allLapak.length === 0 && <span style={{ color: '#9ca3af' }}>Belum ada lapak.</span>}
+                  </div>
+                </td>
                 <td><span className={`badge ${p.isActive ? 'active' : 'unpaid'}`}>{p.isActive ? 'Aktif' : 'Nonaktif'}</span></td>
                 <td><button className="secondary" onClick={() => toggleActive(p)}>{p.isActive ? 'Nonaktifkan' : 'Aktifkan'}</button></td>
               </tr>
