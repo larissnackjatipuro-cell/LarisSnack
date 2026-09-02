@@ -1,0 +1,16 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Semua koleksi: hanya user yang sudah login yang boleh baca/tulis.
+    // CATATAN PENTING: ini adalah rules MVP/demo, BELUM granular per-role.
+    // Sebelum dipakai untuk transaksi finansial nyata, pertimbangkan:
+    // - Batasi 'write' pada koleksi 'consignments'/'salesTransactions' hanya
+    //   untuk user yang lapakId-nya cocok (perlu custom claims atau lookup
+    //   dokumen users/{uid}).
+    // - Batasi update field 'paymentStatus' hanya untuk role 'admin'.
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

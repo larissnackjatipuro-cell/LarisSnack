@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "salesTransactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "lapakId", "order": "ASCENDING" },
+        { "fieldPath": "transactionTime", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
