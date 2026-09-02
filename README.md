@@ -154,7 +154,45 @@ Ini bukan daftar lengkap, tapi hal-hal yang **paling penting untuk disadari**:
 
 ---
 
-## 8. Struktur Data Firestore (Ringkas)
+## 8. Instalasi sebagai Aplikasi Smartphone (PWA)
+
+Aplikasi ini sudah dikonfigurasi sebagai **Progressive Web App (PWA)** — bisa
+di-"install" ke home screen HP dan dibuka fullscreen seperti aplikasi native,
+**tanpa perlu Play Store/App Store**.
+
+### Android (Chrome)
+1. Buka URL aplikasi (misal `namasite.netlify.app`) di Chrome.
+2. Akan muncul banner "Tambahkan Aktivitas Harian ke layar utama", atau buka
+   menu titik tiga (⋮) di pojok kanan atas → **Instal aplikasi** / **Add to
+   Home screen**.
+3. Ikon aplikasi akan muncul di home screen, terbuka tanpa address bar
+   browser (mode `standalone`).
+
+### iPhone/iPad (Safari)
+1. Buka URL aplikasi di **Safari** (bukan Chrome — iOS hanya mengizinkan
+   instalasi PWA lewat Safari).
+2. Tap ikon **Share** (kotak dengan panah ke atas) di bagian bawah.
+3. Pilih **Add to Home Screen**.
+4. Ikon aplikasi akan muncul di home screen dengan nama "Aktivitas Harian".
+
+### Catatan Penting — Batasan PWA Ini
+
+- **Ini bukan aplikasi native** dan tidak akan muncul di Google Play Store
+  atau Apple App Store. Kalau nanti butuh itu, langkah selanjutnya adalah
+  membungkus project ini dengan [Capacitor](https://capacitorjs.com) untuk
+  menghasilkan APK/IPA — di luar cakupan setup PWA ini.
+- Service worker yang dipakai (`registerType: 'autoUpdate'`) hanya
+  mem-precache **file statis** (JS/CSS/HTML/ikon) agar loading lebih cepat.
+  **Ini TIDAK membuat transaksi bisa disimpan saat HP offline** — mencatat
+  penjualan/titipan tetap butuh koneksi internet karena data disimpan
+  langsung ke Firestore.
+- Setelah deploy versi baru ke Netlify, user yang sudah install PWA akan
+  otomatis dapat versi terbaru di kunjungan berikutnya (tidak perlu uninstall
+  ulang), karena `autoUpdate` mengganti service worker di background.
+
+---
+
+## 9. Struktur Data Firestore (Ringkas)
 
 ```
 lapak/{lapakId}                        { name, address, isActive }
