@@ -2,15 +2,114 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Semua koleksi: hanya user yang sudah login yang boleh baca/tulis.
-    // CATATAN PENTING: ini adalah rules MVP/demo, BELUM granular per-role.
-    // Sebelum dipakai untuk transaksi finansial nyata, pertimbangkan:
-    // - Batasi 'write' pada koleksi 'consignments'/'salesTransactions' hanya
-    //   untuk user yang lapakId-nya cocok (perlu custom claims atau lookup
-    //   dokumen users/{uid}).
-    // - Batasi update field 'paymentStatus' hanya untuk role 'admin'.
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Lookup profil user sendiri di koleksi 'users' (dibuat manual lewat
+    // Firebase Console — lihat README §2.2 & §10). Dipakai berulang kali di
+    // bawah untuk cek role & producerId tanpa perlu custom claims/Cloud Function.
+    function myProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function myRole() {
+      return isSignedIn() ? myProfile().role : '';
+    }
+
+    function myProducerId() {
+      return isSignedIn() ? myProfile().producerId : '';
+    }
+
+    function isStaff() {
+      return isSignedIn() && (myRole() == 'admin' || myRole() == 'kasir');
+    }
+
+    function isProducer() {
+      return isSignedIn() && myRole() == 'produsen';
+    }
+
+    // USERS: hanya boleh baca dokumen milik sendiri (dibutuhkan utk load
+    // profil saat login). Tidak ada write dari client sama sekali — akun
+    // & role dikelola manual lewat Firebase Console, supaya role tidak bisa
+    // diubah sendiri oleh user yang bersangkutan.
+    match /users/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    match /lapak/{id} {
+      allow read: if isSignedIn();
+      allow write: if isStaff();
+    }
+
+    // PRODUCERS: staf lihat semua (perlu utk Master Data & pilih produsen
+    // saat bikin titipan). Produsen HANYA boleh lihat data dirinya sendiri —
+    // supaya tidak bisa mengintip kontak/harga produsen lain.
+    match /producers/{id} {
+      allow read: if isStaff() || (isProducer() && id == myProducerId());
+      allow write: if isStaff();
+    }
+
+    // PRODUCTS: sama polanya — produsen hanya lihat katalog produknya sendiri.
+    match /products/{id} {
+      allow read: if isStaff() || (isProducer() && resource.data.producerId == myProducerId());
+      allow write: if isStaff();
+    }
+
+    match /consignments/{consignmentId} {
+      allow read: if isStaff() || (isProducer() && resource.data.producerId == myProducerId());
+
+      // Staf boleh bikin titipan status apa saja (biasanya langsung 'active').
+      // Produsen HANYA boleh bikin utk producerId miliknya sendiri, dan WAJIB
+      // berstatus 'pending' — tidak boleh langsung 'active' tanpa konfirmasi
+      // staf (ini yang menjaga kontrol silang titipan vs fisik barang).
+      allow create: if isStaff()
+        || (isProducer()
+            && request.resource.data.producerId == myProducerId()
+            && request.resource.data.status == 'pending');
+
+      // Update: staf bebas (konfirmasi/tolak/tutup/bayar). Produsen HANYA
+      // boleh update titipan miliknya sendiri SELAMA MASIH 'pending' dan
+      // TIDAK mengubah status-nya sendiri (mencegah produsen self-approve).
+      allow update: if isStaff()
+        || (isProducer()
+            && resource.data.producerId == myProducerId()
+            && resource.data.status == 'pending'
+            && request.resource.data.status == 'pending');
+
+      allow delete: if isStaff();
+
+      match /items/{itemId} {
+        function parentConsignment() {
+          return get(/databases/$(database)/documents/consignments/$(consignmentId)).data;
+        }
+
+        allow read: if isStaff() || (isProducer() && parentConsignment().producerId == myProducerId());
+
+        allow create: if isStaff()
+          || (isProducer()
+              && parentConsignment().producerId == myProducerId()
+              && parentConsignment().status == 'pending');
+
+        allow update: if isStaff()
+          || (isProducer()
+              && parentConsignment().producerId == myProducerId()
+              && parentConsignment().status == 'pending');
+
+        allow delete: if isStaff();
+      }
+    }
+
+    // SALES & PAYMENT: data finansial internal lapak — produsen TIDAK
+    // diberi akses sama sekali ke sini (mereka lihat stok terjual lewat
+    // qtySold di consignments/items, cukup utk kebutuhan monitoring mereka,
+    // tanpa membuka detail transaksi per pembeli/produsen lain).
+    match /salesTransactions/{id} {
+      allow read, write: if isStaff();
+      match /items/{itemId} {
+        allow read, write: if isStaff();
+      }
     }
   }
 }
