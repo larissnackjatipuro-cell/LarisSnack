@@ -20,13 +20,25 @@ export default function TitipanSaya() {
   const [todayConsignment, setTodayConsignment] = useState(null)
   const [todayItems, setTodayItems] = useState([])
   const [history, setHistory] = useState([])
+  const [loadError, setLoadError] = useState('')
 
   const producerId = profile?.producerId
 
   useEffect(() => {
     if (producerId) {
-      listProductsByProducer(producerId).then(setProducts)
-      listConsignmentsForProducer(producerId).then(setHistory)
+      setLoadError('')
+      listProductsByProducer(producerId)
+        .then(setProducts)
+        .catch(err => {
+          console.error('Gagal memuat produk:', err)
+          setLoadError(`Gagal memuat katalog produk: ${err.message}`)
+        })
+      listConsignmentsForProducer(producerId)
+        .then(setHistory)
+        .catch(err => {
+          console.error('Gagal memuat riwayat:', err)
+          setLoadError(prev => prev || `Gagal memuat riwayat titipan: ${err.message}`)
+        })
     }
   }, [producerId])
 
@@ -105,6 +117,12 @@ export default function TitipanSaya() {
     <div>
       <div className="page-title">Titipan Saya</div>
       <div className="page-subtitle">Ajukan titipan produk Anda dan pantau statusnya di {selectedLapak?.name || '-'}.</div>
+
+      {loadError && (
+        <div style={{ background: '#fee2e2', color: '#991b1b', padding: '10px 14px', borderRadius: 8, marginBottom: 16, fontSize: 13 }}>
+          <strong>Error:</strong> {loadError}
+        </div>
+      )}
 
       {availableLapak.length === 0 && (
         <div className="card" style={{ color: '#d97706' }}>
