@@ -15,7 +15,7 @@ const navItems = [
 
 export default function Layout({ children }) {
   const { profile, logout } = useAuth()
-  const { availableLapak, selectedLapakId, setSelectedLapakId } = useLapak()
+  const { availableLapak, selectedLapakId, setSelectedLapakId, error: lapakError } = useLapak()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -56,11 +56,16 @@ export default function Layout({ children }) {
         </nav>
       </aside>
       <main className="main">
+        {lapakError && (
+          <div style={{ background: '#fee2e2', color: '#991b1b', padding: '10px 14px', borderRadius: 8, marginBottom: 16, fontSize: 13 }}>
+            <strong>Gagal memuat data lapak:</strong> {lapakError}
+          </div>
+        )}
         <div className="toolbar">
           <div style={{ fontSize: 13, color: '#6b7280' }}>
             Masuk sebagai <strong>{profile?.name}</strong> ({profile?.role})
           </div>
-          {availableLapak.length > 0 && (
+          {availableLapak.length > 0 ? (
             <div className="lapak-picker">
               <label style={{ marginBottom: 0, display: 'inline', marginRight: 8 }}>Lapak:</label>
               <select
@@ -71,6 +76,10 @@ export default function Layout({ children }) {
                   <option key={l.id} value={l.id}>{l.name}</option>
                 ))}
               </select>
+            </div>
+          ) : !lapakError && (
+            <div style={{ fontSize: 12, color: '#d97706' }}>
+              Tidak ada lapak yang bisa diakses akun ini (cek role &amp; lapakIds di Firestore).
             </div>
           )}
         </div>
