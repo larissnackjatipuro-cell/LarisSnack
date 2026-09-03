@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useLapak } from '../context/LapakContext'
 
-const navItems = [
+const staffNavItems = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/titipan', label: 'Titipan Harian' },
   { to: '/pos', label: 'Transaksi Penjualan' },
@@ -11,6 +11,10 @@ const navItems = [
   { to: '/pembayaran', label: 'Pembayaran Produsen' },
   { to: '/laporan', label: 'Laporan' },
   { to: '/master-data', label: 'Master Data' },
+]
+
+const producerNavItems = [
+  { to: '/titipan-saya', label: 'Titipan Saya', end: true },
 ]
 
 export default function Layout({ children }) {
@@ -47,7 +51,7 @@ export default function Layout({ children }) {
           <button className="sidebar-close-btn" onClick={() => setMenuOpen(false)} aria-label="Tutup menu">✕</button>
         </div>
         <nav onClick={() => setMenuOpen(false)}>
-          {navItems.map(item => (
+          {(profile?.role === 'produsen' ? producerNavItems : staffNavItems).map(item => (
             <NavLink key={item.to} to={item.to} end={item.end}>
               {item.label}
             </NavLink>

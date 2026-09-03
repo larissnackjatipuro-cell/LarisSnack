@@ -1,5 +1,5 @@
 import {
-  collection, doc, getDoc, getDocs, addDoc, updateDoc, query, where,
+  collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, query, where,
   runTransaction, serverTimestamp, orderBy,
 } from 'firebase/firestore'
 import { db } from './firebase'
@@ -68,7 +68,7 @@ export async function findConsignment(producerId, lapakId, date) {
   return { id: d.id, ...d.data() }
 }
 
-export async function createConsignment({ producerId, producerName, lapakId, lapakName, date, items, createdBy }) {
+export async function createConsignment({ producerId, producerName, lapakId, lapakName, date, items, createdBy, status = 'active' }) {
   const existing = await findConsignment(producerId, lapakId, date)
   if (existing) {
     throw new Error(
@@ -79,11 +79,16 @@ export async function createConsignment({ producerId, producerName, lapakId, lap
 
   const consignmentRef = await addDoc(collection(db, 'consignments'), {
     producerId, producerName, lapakId, lapakName, date,
-    status: 'active',
+    status, // 'active' kalau dibuat staf lapak, 'pending' kalau diajukan produsen sendiri
     paymentStatus: 'unpaid',
     paidAt: null,
     paidBy: null,
     closedAt: null,
+    confirmedAt: null,
+    confirmedBy: null,
+    rejectedAt: null,
+    rejectedBy: null,
+    rejectionReason: '',
     createdBy,
     createdAt: serverTimestamp(),
   })
@@ -104,6 +109,68 @@ export async function createConsignment({ producerId, producerName, lapakId, lap
   }
 
   return consignmentRef.id
+}
+
+// Dipakai halaman produsen: titipan yang mereka ajukan sendiri masuk sebagai
+// 'pending' — TIDAK langsung bisa dijual sampai staf lapak konfirmasi lewat
+// confirmConsignment() di bawah. Ini menjaga kontrol silang: produsen tidak
+// bisa self-report lalu langsung jadi dasar pembayaran tanpa dicek.
+export async function createConsignmentProposal(params) {
+  return createConsignment({ ...params, status: 'pending' })
+}
+
+export async function listPendingConsignments(lapakId) {
+  const q = query(
+    collection(db, 'consignments'),
+    where('lapakId', '==', lapakId),
+    where('status', '==', 'pending'),
+  )
+  const snap = await getDocs(q)
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+}
+
+// Staf lapak konfirmasi titipan yang diajukan produsen, SETELAH mengecek fisik
+// barang (dan kalau perlu, mengoreksi qty/harga lewat updateConsignmentItem
+// sebelum memanggil ini). Ini mengubah status jadi 'active' — baru dari titik
+// ini item-itemnya muncul sebagai stok yang bisa dijual di POS.
+export async function confirmConsignment(consignmentId, confirmedBy) {
+  const ref = doc(db, 'consignments', consignmentId)
+  const snap = await getDoc(ref)
+  if (!snap.exists()) throw new Error('Titipan tidak ditemukan.')
+  if (snap.data().status !== 'pending') throw new Error('Titipan ini bukan status pending.')
+  await updateDoc(ref, { status: 'active', confirmedAt: serverTimestamp(), confirmedBy })
+}
+
+// Tolak titipan yang diajukan produsen (misal barang tidak jadi diantar, atau
+// datanya salah total). Status jadi 'void', tidak bisa dijual, tidak masuk
+// rekap pembayaran.
+export async function rejectConsignment(consignmentId, reason, rejectedBy) {
+  const ref = doc(db, 'consignments', consignmentId)
+  const snap = await getDoc(ref)
+  if (!snap.exists()) throw new Error('Titipan tidak ditemukan.')
+  if (snap.data().status !== 'pending') throw new Error('Titipan ini bukan status pending.')
+  await updateDoc(ref, {
+    status: 'void',
+    rejectedAt: serverTimestamp(),
+    rejectedBy,
+    rejectionReason: reason || '',
+  })
+}
+
+// Monitoring untuk halaman produsen: riwayat titipan milik produsen ini
+// lintas lapak & tanggal (tidak pakai orderBy field lain supaya tidak perlu
+// index komposit baru — diurutkan di sisi klien saja).
+export async function listConsignmentsForProducer(producerId) {
+  const q = query(collection(db, 'consignments'), where('producerId', '==', producerId))
+  const snap = await getDocs(q)
+  const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+  return rows.sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+}
+
+export async function getProducerById(producerId) {
+  const snap = await getDoc(doc(db, 'producers', producerId))
+  if (!snap.exists()) return null
+  return { id: snap.id, ...snap.data() }
 }
 
 export async function addItemToConsignment(consignmentId, item) {
@@ -134,6 +201,53 @@ export async function listConsignmentsForLapak(lapakId, date = todayStr()) {
 export async function getConsignmentItems(consignmentId) {
   const snap = await getDocs(collection(db, 'consignments', consignmentId, 'items'))
   return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+}
+
+// Edit item titipan SEBELUM tutup hari. Qty titipan tidak boleh diturunkan
+// sampai di bawah (qtySold + qtyReturned) — itu akan merusak invarian stok
+// (lihat business rule §7 di PRD: qtyTitipan harus selalu >= qtySold+qtyReturned).
+export async function updateConsignmentItem(consignmentId, itemId, updates) {
+  const ref = doc(db, 'consignments', consignmentId, 'items', itemId)
+  const snap = await getDoc(ref)
+  if (!snap.exists()) throw new Error('Item titipan tidak ditemukan.')
+  const data = snap.data()
+  const qtySold = Number(data.qtySold)
+  const qtyReturned = Number(data.qtyReturned)
+
+  const payload = {}
+  if (updates.qtyTitipan !== undefined) {
+    const newQty = Number(updates.qtyTitipan)
+    if (newQty < qtySold + qtyReturned) {
+      throw new Error(
+        `Qty titipan tidak boleh kurang dari ${qtySold + qtyReturned} ` +
+        `(jumlah yang sudah terjual/diretur untuk item ini).`
+      )
+    }
+    payload.qtyTitipan = newQty
+  }
+  if (updates.costPrice !== undefined) payload.costPrice = Number(updates.costPrice)
+  if (updates.sellPrice !== undefined) payload.sellPrice = Number(updates.sellPrice)
+
+  await updateDoc(ref, payload)
+}
+
+// Hapus item titipan. Hanya diizinkan kalau BELUM ada penjualan tercatat dari
+// item ini (qtySold === 0) — kalau sudah ada, hapus akan membuat riwayat
+// transaksi penjualan mengacu ke item yang tidak ada lagi (data orphan).
+// Untuk item yang sudah terjual sebagian, gunakan proses Tutup Hari & Retur,
+// bukan hapus.
+export async function deleteConsignmentItem(consignmentId, itemId) {
+  const ref = doc(db, 'consignments', consignmentId, 'items', itemId)
+  const snap = await getDoc(ref)
+  if (!snap.exists()) throw new Error('Item titipan tidak ditemukan.')
+  const data = snap.data()
+  if (Number(data.qtySold) > 0) {
+    throw new Error(
+      'Item ini tidak bisa dihapus karena sudah ada penjualan tercatat. ' +
+      'Gunakan proses Tutup Hari & Retur untuk mengembalikan sisa stok ke produsen.'
+    )
+  }
+  await deleteDoc(ref)
 }
 
 /* =========================================================
@@ -347,6 +461,8 @@ export async function getDailyReport(lapakId, date) {
     const nilaiDibayar = items.reduce((s, it) => s + Number(it.qtySold) * Number(it.costPrice), 0)
     rows.push({
       consignmentId: c.id,
+      lapakId: c.lapakId,
+      lapakName: c.lapakName,
       producerName: c.producerName,
       status: c.status,
       paymentStatus: c.paymentStatus,
