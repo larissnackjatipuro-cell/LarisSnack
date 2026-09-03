@@ -3,7 +3,8 @@ import { useAuth } from '../context/AuthContext'
 import { useLapak } from '../context/LapakContext'
 import {
   listProductsByProducer, createConsignmentProposal, findConsignment,
-  getConsignmentItems, listConsignmentsForProducer,
+  getConsignmentItems, listConsignmentsForProducer, getProducerFinancialSummary,
+  subscribeActiveConsignmentsForProducer, subscribeConsignmentItems,
 } from '../lib/domain'
 import { todayStr, formatRupiah, formatDateDisplay } from '../lib/dateUtils'
 
@@ -22,6 +23,10 @@ export default function TitipanSaya() {
   const [history, setHistory] = useState([])
   const [loadError, setLoadError] = useState('')
 
+  const [summary, setSummary] = useState(null)
+  const [activeConsignments, setActiveConsignments] = useState([])
+  const [liveItemsByConsignment, setLiveItemsByConsignment] = useState({})
+
   const producerId = profile?.producerId
 
   useEffect(() => {
@@ -39,8 +44,35 @@ export default function TitipanSaya() {
           console.error('Gagal memuat riwayat:', err)
           setLoadError(prev => prev || `Gagal memuat riwayat titipan: ${err.message}`)
         })
+      getProducerFinancialSummary(producerId)
+        .then(setSummary)
+        .catch(err => {
+          console.error('Gagal memuat ringkasan:', err)
+          setLoadError(prev => prev || `Gagal memuat ringkasan: ${err.message}`)
+        })
     }
   }, [producerId])
+
+  // Real-time: dengar perubahan titipan AKTIF (semua lapak) — otomatis update
+  // saat staf konfirmasi titipan baru atau titipan lain berubah status.
+  useEffect(() => {
+    if (!producerId) return
+    const unsub = subscribeActiveConsignmentsForProducer(producerId, setActiveConsignments)
+    return () => unsub()
+  }, [producerId])
+
+  // Real-time: dengar perubahan qtySold/qtyReturned di tiap titipan aktif —
+  // ini yang membuat stok ter-update otomatis begitu kasir menjual sesuatu,
+  // tanpa perlu refresh halaman.
+  useEffect(() => {
+    const unsubs = activeConsignments.map(c =>
+      subscribeConsignmentItems(c.id, (items) => {
+        setLiveItemsByConsignment(prev => ({ ...prev, [c.id]: items }))
+      })
+    )
+    return () => unsubs.forEach(u => u())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeConsignments.map(c => c.id).join(',')])
 
   useEffect(() => {
     if (producerId && selectedLapakId) checkToday()
@@ -121,6 +153,72 @@ export default function TitipanSaya() {
       {loadError && (
         <div style={{ background: '#fee2e2', color: '#991b1b', padding: '10px 14px', borderRadius: 8, marginBottom: 16, fontSize: 13 }}>
           <strong>Error:</strong> {loadError}
+        </div>
+      )}
+
+      {summary && (
+        <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+          <div className="stat-card">
+            <div className="label">Estimasi Aktif (Belum Ditutup)</div>
+            <div className="value">{formatRupiah(summary.estimasiAktif)}</div>
+          </div>
+          <div className="stat-card">
+            <div className="label">Menunggu Pembayaran</div>
+            <div className="value">{formatRupiah(summary.menungguBayar)}</div>
+          </div>
+          <div className="stat-card">
+            <div className="label">Sudah Diterima (Total)</div>
+            <div className="value">{formatRupiah(summary.sudahDiterima)}</div>
+          </div>
+        </div>
+      )}
+
+      {summary && summary.perLapak.length > 1 && (
+        <div className="card">
+          <strong>Rincian per Lapak</strong>
+          <table style={{ marginTop: 8 }}>
+            <thead><tr><th>Lapak</th><th>Estimasi Aktif</th><th>Menunggu Bayar</th><th>Sudah Diterima</th></tr></thead>
+            <tbody>
+              {summary.perLapak.map(l => (
+                <tr key={l.lapakName}>
+                  <td>{l.lapakName}</td>
+                  <td>{formatRupiah(l.estimasiAktif)}</td>
+                  <td>{formatRupiah(l.menungguBayar)}</td>
+                  <td>{formatRupiah(l.sudahDiterima)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {activeConsignments.length > 0 && (
+        <div className="card">
+          <div className="toolbar">
+            <strong>Stok Real-Time — Semua Lapak Aktif</strong>
+            <span style={{ fontSize: 12, color: '#16a34a' }}>● Update otomatis</span>
+          </div>
+          {activeConsignments.map(c => {
+            const items = liveItemsByConsignment[c.id] || []
+            return (
+              <div key={c.id} style={{ borderTop: '1px solid #e2e4e9', paddingTop: 10, marginTop: 10 }}>
+                <div style={{ fontWeight: 600, marginBottom: 6 }}>{c.lapakName}</div>
+                <table>
+                  <thead><tr><th>Produk</th><th>Titipan</th><th>Terjual</th><th>Sisa Stok</th></tr></thead>
+                  <tbody>
+                    {items.map(it => (
+                      <tr key={it.id}>
+                        <td>{it.productName}</td>
+                        <td>{it.qtyTitipan}</td>
+                        <td>{it.qtySold}</td>
+                        <td style={{ fontWeight: 700 }}>{Number(it.qtyTitipan) - Number(it.qtySold) - Number(it.qtyReturned)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          })}
         </div>
       )}
 

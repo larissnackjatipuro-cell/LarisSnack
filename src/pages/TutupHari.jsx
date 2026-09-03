@@ -4,7 +4,8 @@ import { listConsignmentsForLapak, getConsignmentItems, closeConsignmentDay } fr
 import { todayStr } from '../lib/dateUtils'
 
 export default function TutupHari() {
-  const { selectedLapakId, selectedLapak } = useLapak()
+  const { selectedLapakId, selectedLapak, availableLapak } = useLapak()
+  const [mode, setMode] = useState('single')
   const [activeConsignments, setActiveConsignments] = useState([])
   const [itemsByConsignment, setItemsByConsignment] = useState({})
   const [overrides, setOverrides] = useState({}) // { consignmentId: { itemId: qty } }
@@ -12,9 +13,10 @@ export default function TutupHari() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (selectedLapakId) load()
+    if (mode === 'single' && selectedLapakId) load()
+    if (mode === 'gabungan' && availableLapak.length > 0) loadGabungan()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedLapakId])
+  }, [selectedLapakId, mode, availableLapak])
 
   async function load() {
     const list = await listConsignmentsForLapak(selectedLapakId, todayStr())
@@ -25,6 +27,24 @@ export default function TutupHari() {
       map[c.id] = await getConsignmentItems(c.id)
     }
     setItemsByConsignment(map)
+  }
+
+  async function loadGabungan() {
+    const all = []
+    for (const l of availableLapak) {
+      const list = await listConsignmentsForLapak(l.id, todayStr())
+      all.push(...list.filter(c => c.status === 'active'))
+    }
+    setActiveConsignments(all)
+    const map = {}
+    for (const c of all) {
+      map[c.id] = await getConsignmentItems(c.id)
+    }
+    setItemsByConsignment(map)
+  }
+
+  function refresh() {
+    return mode === 'gabungan' ? loadGabungan() : load()
   }
 
   function sisaStok(item) {
@@ -47,7 +67,7 @@ export default function TutupHari() {
         Object.entries(rawOverrides).filter(([, v]) => v !== '' && v !== undefined)
       )
       await closeConsignmentDay(consignmentId, parsed)
-      await load()
+      await refresh()
     } catch (err) {
       setError(err.message)
     } finally {
@@ -59,9 +79,21 @@ export default function TutupHari() {
     <div>
       <div className="page-title">Tutup Hari & Retur</div>
       <div className="page-subtitle">
-        Kunci titipan hari ini di {selectedLapak?.name}. Sisa stok otomatis dihitung sebagai retur ke produsen —
-        Anda bisa mengubah nilainya manual jika ada catatan khusus (misal rusak) sebelum menutup.
+        {mode === 'single'
+          ? `Kunci titipan hari ini di ${selectedLapak?.name}.`
+          : `Kunci titipan hari ini di semua lapak (${availableLapak.length} lapak) dari satu layar.`}
+        {' '}Sisa stok otomatis dihitung sebagai retur ke produsen — Anda bisa mengubah nilainya manual jika ada catatan khusus (misal rusak) sebelum menutup.
       </div>
+
+      {availableLapak.length > 1 && (
+        <div className="card">
+          <label>Tampilan</label>
+          <select value={mode} onChange={e => setMode(e.target.value)} style={{ width: 280 }}>
+            <option value="single">Per Lapak ({selectedLapak?.name})</option>
+            <option value="gabungan">Gabungan Semua Lapak ({availableLapak.length} lapak)</option>
+          </select>
+        </div>
+      )}
 
       {error && <div className="error-text">{error}</div>}
 
@@ -72,7 +104,10 @@ export default function TutupHari() {
       {activeConsignments.map(c => (
         <div className="card" key={c.id}>
           <div className="toolbar">
-            <strong>{c.producerName}</strong>
+            <div>
+              <strong>{c.producerName}</strong>
+              {mode === 'gabungan' && <span style={{ fontSize: 12, color: '#6b7280', marginLeft: 8 }}>({c.lapakName})</span>}
+            </div>
             <button onClick={() => handleClose(c.id)} disabled={busy[c.id]}>
               {busy[c.id] ? 'Memproses...' : 'Tutup Titipan Ini'}
             </button>

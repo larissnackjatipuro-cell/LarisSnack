@@ -1,6 +1,6 @@
 import {
   collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, query, where,
-  runTransaction, serverTimestamp, orderBy,
+  runTransaction, serverTimestamp, orderBy, onSnapshot,
 } from 'firebase/firestore'
 import { db } from './firebase'
 import { todayStr } from './dateUtils'
@@ -16,6 +16,18 @@ export async function listLapak() {
 
 export async function createLapak(data) {
   return addDoc(collection(db, 'lapak'), { ...data, isActive: true, createdAt: serverTimestamp() })
+}
+
+export async function updateLapak(id, data) {
+  return updateDoc(doc(db, 'lapak', id), data)
+}
+
+// Hapus master data AMAN dilakukan meski sudah punya riwayat titipan, karena
+// nama lapak/produsen/produk selalu disalin (denormalisasi) ke dalam dokumen
+// consignments/products saat dibuat — riwayat lama tidak akan rusak/hilang.
+// Yang hilang cuma kemampuan membuat titipan BARU yang mereferensikan data ini.
+export async function deleteLapak(id) {
+  return deleteDoc(doc(db, 'lapak', id))
 }
 
 export async function listProducers() {
@@ -39,6 +51,10 @@ export async function updateProducer(id, data) {
   return updateDoc(doc(db, 'producers', id), data)
 }
 
+export async function deleteProducer(id) {
+  return deleteDoc(doc(db, 'producers', id))
+}
+
 export async function listProductsByProducer(producerId) {
   const q = query(collection(db, 'products'), where('producerId', '==', producerId))
   const snap = await getDocs(q)
@@ -47,6 +63,14 @@ export async function listProductsByProducer(producerId) {
 
 export async function createProduct(data) {
   return addDoc(collection(db, 'products'), { ...data, isActive: true, createdAt: serverTimestamp() })
+}
+
+export async function updateProduct(id, data) {
+  return updateDoc(doc(db, 'products', id), data)
+}
+
+export async function deleteProduct(id) {
+  return deleteDoc(doc(db, 'products', id))
 }
 
 /* =========================================================
@@ -171,6 +195,54 @@ export async function getProducerById(producerId) {
   const snap = await getDoc(doc(db, 'producers', producerId))
   if (!snap.exists()) return null
   return { id: snap.id, ...snap.data() }
+}
+
+// ===== REAL-TIME (onSnapshot) — dipakai halaman produsen untuk memantau
+// stok yang berubah langsung saat kasir menjual, tanpa perlu refresh manual.
+// Mengembalikan fungsi unsubscribe — WAJIB dipanggil saat komponen unmount
+// (lihat pemakaian di useEffect cleanup) supaya tidak bocor listener.
+
+export function subscribeActiveConsignmentsForProducer(producerId, callback) {
+  const q = query(
+    collection(db, 'consignments'),
+    where('producerId', '==', producerId),
+    where('status', '==', 'active'),
+  )
+  return onSnapshot(q, (snap) => {
+    callback(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+  })
+}
+
+export function subscribeConsignmentItems(consignmentId, callback) {
+  return onSnapshot(collection(db, 'consignments', consignmentId, 'items'), (snap) => {
+    callback(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+  })
+}
+
+// Ringkasan finansial produsen lintas SEMUA lapak (bukan cuma yang sedang
+// dipilih di dropdown atas) — dipecah per status supaya jelas mana yang masih
+// estimasi (aktif, bisa berubah), mana yang sudah pasti tapi belum dibayar
+// (closed), dan mana yang sudah benar-benar diterima (settled).
+export async function getProducerFinancialSummary(producerId) {
+  const all = await listConsignmentsForProducer(producerId)
+  let estimasiAktif = 0, menungguBayar = 0, sudahDiterima = 0
+  const perLapak = {}
+
+  for (const c of all) {
+    const items = await getConsignmentItems(c.id)
+    const nilai = items.reduce((s, it) => s + Number(it.qtySold) * Number(it.costPrice), 0)
+
+    if (c.status === 'active') estimasiAktif += nilai
+    else if (c.status === 'closed' && c.paymentStatus === 'unpaid') menungguBayar += nilai
+    else if (c.status === 'settled') sudahDiterima += nilai
+
+    if (!perLapak[c.lapakId]) perLapak[c.lapakId] = { lapakName: c.lapakName, estimasiAktif: 0, menungguBayar: 0, sudahDiterima: 0 }
+    if (c.status === 'active') perLapak[c.lapakId].estimasiAktif += nilai
+    else if (c.status === 'closed' && c.paymentStatus === 'unpaid') perLapak[c.lapakId].menungguBayar += nilai
+    else if (c.status === 'settled') perLapak[c.lapakId].sudahDiterima += nilai
+  }
+
+  return { estimasiAktif, menungguBayar, sudahDiterima, perLapak: Object.values(perLapak) }
 }
 
 export async function addItemToConsignment(consignmentId, item) {

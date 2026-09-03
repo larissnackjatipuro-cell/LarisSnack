@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import {
-  listLapak, createLapak, listProducers, createProducer, updateProducer,
-  listProductsByProducer, createProduct,
+  listLapak, createLapak, updateLapak, deleteLapak,
+  listProducers, createProducer, updateProducer, deleteProducer,
+  listProductsByProducer, createProduct, updateProduct, deleteProduct,
 } from '../lib/domain'
 import { useLapak } from '../context/LapakContext'
+import { formatRupiah } from '../lib/dateUtils'
 
 export default function MasterData() {
   const [tab, setTab] = useState('lapak')
@@ -23,11 +25,19 @@ export default function MasterData() {
   )
 }
 
+/* =========================================================
+ * LAPAK
+ * =======================================================*/
+
 function LapakTab() {
   const [list, setList] = useState([])
   const [name, setName] = useState('')
   const [address, setAddress] = useState('')
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const [editingId, setEditingId] = useState(null)
+  const [editForm, setEditForm] = useState({ name: '', address: '' })
 
   useEffect(() => { load() }, [])
   async function load() { setList(await listLapak()) }
@@ -39,6 +49,37 @@ function LapakTab() {
     setName(''); setAddress('')
     await load()
     setBusy(false)
+  }
+
+  function startEdit(l) {
+    setError('')
+    setEditingId(l.id)
+    setEditForm({ name: l.name, address: l.address || '' })
+  }
+
+  async function saveEdit(l) {
+    setError('')
+    try {
+      await updateLapak(l.id, editForm)
+      setEditingId(null)
+      await load()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function handleDelete(l) {
+    setError('')
+    if (!window.confirm(
+      `Hapus lapak "${l.name}"? Riwayat titipan/penjualan lama TETAP ADA (nama lapak tersimpan di riwayat), ` +
+      `tapi lapak ini tidak akan bisa dipilih lagi untuk titipan/transaksi baru.`
+    )) return
+    try {
+      await deleteLapak(l.id)
+      await load()
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   return (
@@ -56,17 +97,47 @@ function LapakTab() {
           <div><button type="submit" disabled={busy}>Tambah Lapak</button></div>
         </form>
       </div>
+      {error && <div className="error-text">{error}</div>}
       <div className="card">
         <table>
-          <thead><tr><th>Nama</th><th>Alamat</th></tr></thead>
+          <thead><tr><th>Nama</th><th>Alamat</th><th>Aksi</th></tr></thead>
           <tbody>
-            {list.map(l => <tr key={l.id}><td>{l.name}</td><td>{l.address}</td></tr>)}
+            {list.map(l => {
+              const isEditing = editingId === l.id
+              return (
+                <tr key={l.id}>
+                  {isEditing ? (
+                    <>
+                      <td><input style={{ marginBottom: 0 }} value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} /></td>
+                      <td><input style={{ marginBottom: 0 }} value={editForm.address} onChange={e => setEditForm({ ...editForm, address: e.target.value })} /></td>
+                      <td style={{ display: 'flex', gap: 6 }}>
+                        <button onClick={() => saveEdit(l)}>Simpan</button>
+                        <button className="secondary" onClick={() => setEditingId(null)}>Batal</button>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td>{l.name}</td>
+                      <td>{l.address}</td>
+                      <td style={{ display: 'flex', gap: 6 }}>
+                        <button className="secondary" onClick={() => startEdit(l)}>Edit</button>
+                        <button className="danger" onClick={() => handleDelete(l)}>Hapus</button>
+                      </td>
+                    </>
+                  )}
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
     </>
   )
 }
+
+/* =========================================================
+ * PRODUSEN
+ * =======================================================*/
 
 function ProdusenTab() {
   const { allLapak } = useLapak()
@@ -76,6 +147,10 @@ function ProdusenTab() {
   const [address, setAddress] = useState('')
   const [selectedLapak, setSelectedLapak] = useState([])
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const [editingId, setEditingId] = useState(null)
+  const [editForm, setEditForm] = useState({ name: '', phone: '', address: '' })
 
   useEffect(() => { load() }, [])
   async function load() { setList(await listProducers()) }
@@ -100,11 +175,40 @@ function ProdusenTab() {
 
   async function toggleProducerLapak(p, lapakId) {
     const current = p.lapakIds || []
-    const next = current.includes(lapakId)
-      ? current.filter(id => id !== lapakId)
-      : [...current, lapakId]
+    const next = current.includes(lapakId) ? current.filter(id => id !== lapakId) : [...current, lapakId]
     await updateProducer(p.id, { lapakIds: next })
     await load()
+  }
+
+  function startEdit(p) {
+    setError('')
+    setEditingId(p.id)
+    setEditForm({ name: p.name, phone: p.phone || '', address: p.address || '' })
+  }
+
+  async function saveEdit(p) {
+    setError('')
+    try {
+      await updateProducer(p.id, editForm)
+      setEditingId(null)
+      await load()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function handleDelete(p) {
+    setError('')
+    if (!window.confirm(
+      `Hapus produsen "${p.name}"? Riwayat titipan lama TETAP ADA, tapi produsen ini (dan produk-produknya) ` +
+      `tidak akan bisa dipilih lagi untuk titipan baru. Kalau produsen ini punya akun login, akun itu juga akan gagal masuk.`
+    )) return
+    try {
+      await deleteProducer(p.id)
+      await load()
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   return (
@@ -142,34 +246,58 @@ function ProdusenTab() {
           <button type="submit" disabled={busy}>Tambah Produsen</button>
         </form>
       </div>
+
+      {error && <div className="error-text">{error}</div>}
+
       <div className="card">
         <table>
-          <thead><tr><th>Nama</th><th>Telepon</th><th>Terdaftar di Lapak (klik untuk ubah)</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Nama</th><th>Telepon</th><th>Terdaftar di Lapak</th><th>Status</th><th>Aksi</th></tr></thead>
           <tbody>
-            {list.map(p => (
-              <tr key={p.id}>
-                <td>{p.name}</td>
-                <td>{p.phone}</td>
-                <td>
-                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                    {allLapak.map(l => (
-                      <label key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 4, fontWeight: 400, marginBottom: 0, fontSize: 13 }}>
-                        <input
-                          type="checkbox"
-                          style={{ width: 'auto', marginBottom: 0 }}
-                          checked={(p.lapakIds || []).includes(l.id)}
-                          onChange={() => toggleProducerLapak(p, l.id)}
-                        />
-                        {l.name}
-                      </label>
-                    ))}
-                    {allLapak.length === 0 && <span style={{ color: '#9ca3af' }}>Belum ada lapak.</span>}
-                  </div>
-                </td>
-                <td><span className={`badge ${p.isActive ? 'active' : 'unpaid'}`}>{p.isActive ? 'Aktif' : 'Nonaktif'}</span></td>
-                <td><button className="secondary" onClick={() => toggleActive(p)}>{p.isActive ? 'Nonaktifkan' : 'Aktifkan'}</button></td>
-              </tr>
-            ))}
+            {list.map(p => {
+              const isEditing = editingId === p.id
+              return (
+                <tr key={p.id}>
+                  {isEditing ? (
+                    <>
+                      <td><input style={{ marginBottom: 0 }} value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} /></td>
+                      <td><input style={{ marginBottom: 0 }} value={editForm.phone} onChange={e => setEditForm({ ...editForm, phone: e.target.value })} /></td>
+                      <td><input style={{ marginBottom: 0 }} placeholder="Alamat" value={editForm.address} onChange={e => setEditForm({ ...editForm, address: e.target.value })} /></td>
+                      <td colSpan={2} style={{ display: 'flex', gap: 6 }}>
+                        <button onClick={() => saveEdit(p)}>Simpan</button>
+                        <button className="secondary" onClick={() => setEditingId(null)}>Batal</button>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td>{p.name}</td>
+                      <td>{p.phone}</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                          {allLapak.map(l => (
+                            <label key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 4, fontWeight: 400, marginBottom: 0, fontSize: 13 }}>
+                              <input
+                                type="checkbox"
+                                style={{ width: 'auto', marginBottom: 0 }}
+                                checked={(p.lapakIds || []).includes(l.id)}
+                                onChange={() => toggleProducerLapak(p, l.id)}
+                              />
+                              {l.name}
+                            </label>
+                          ))}
+                          {allLapak.length === 0 && <span style={{ color: '#9ca3af' }}>Belum ada lapak.</span>}
+                        </div>
+                      </td>
+                      <td><span className={`badge ${p.isActive ? 'active' : 'unpaid'}`}>{p.isActive ? 'Aktif' : 'Nonaktif'}</span></td>
+                      <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <button className="secondary" onClick={() => startEdit(p)}>Edit</button>
+                        <button className="secondary" onClick={() => toggleActive(p)}>{p.isActive ? 'Nonaktifkan' : 'Aktifkan'}</button>
+                        <button className="danger" onClick={() => handleDelete(p)}>Hapus</button>
+                      </td>
+                    </>
+                  )}
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -177,12 +305,20 @@ function ProdusenTab() {
   )
 }
 
+/* =========================================================
+ * PRODUK
+ * =======================================================*/
+
 function ProdukTab() {
   const [producers, setProducers] = useState([])
   const [producerId, setProducerId] = useState('')
   const [products, setProducts] = useState([])
   const [form, setForm] = useState({ name: '', category: '', unit: 'pcs', defaultCostPrice: '', defaultSellPrice: '' })
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const [editingId, setEditingId] = useState(null)
+  const [editForm, setEditForm] = useState({ name: '', category: '', unit: 'pcs', defaultCostPrice: '', defaultSellPrice: '' })
 
   useEffect(() => { listProducers().then(setProducers) }, [])
   useEffect(() => { if (producerId) loadProducts() }, [producerId])
@@ -206,6 +342,46 @@ function ProdukTab() {
     setForm({ name: '', category: '', unit: 'pcs', defaultCostPrice: '', defaultSellPrice: '' })
     await loadProducts()
     setBusy(false)
+  }
+
+  function startEdit(p) {
+    setError('')
+    setEditingId(p.id)
+    setEditForm({
+      name: p.name, category: p.category || '', unit: p.unit || 'pcs',
+      defaultCostPrice: p.defaultCostPrice, defaultSellPrice: p.defaultSellPrice,
+    })
+  }
+
+  async function saveEdit(p) {
+    setError('')
+    try {
+      await updateProduct(p.id, {
+        name: editForm.name,
+        category: editForm.category,
+        unit: editForm.unit,
+        defaultCostPrice: Number(editForm.defaultCostPrice) || 0,
+        defaultSellPrice: Number(editForm.defaultSellPrice) || 0,
+      })
+      setEditingId(null)
+      await loadProducts()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function handleDelete(p) {
+    setError('')
+    if (!window.confirm(
+      `Hapus produk "${p.name}"? Riwayat titipan lama yang sudah memakai produk ini TETAP ADA ` +
+      `(nama produk tersimpan di riwayat), tapi produk ini tidak bisa dipilih lagi untuk titipan baru.`
+    )) return
+    try {
+      await deleteProduct(p.id)
+      await loadProducts()
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   return (
@@ -251,17 +427,49 @@ function ProdukTab() {
         )}
       </div>
 
+      {error && <div className="error-text">{error}</div>}
+
       {producerId && (
         <div className="card">
           <table>
-            <thead><tr><th>Produk</th><th>Kategori</th><th>Satuan</th><th>Harga Titipan</th><th>Harga Jual</th></tr></thead>
+            <thead><tr><th>Produk</th><th>Kategori</th><th>Satuan</th><th>Harga Titipan</th><th>Harga Jual</th><th>Aksi</th></tr></thead>
             <tbody>
-              {products.map(p => (
-                <tr key={p.id}>
-                  <td>{p.name}</td><td>{p.category}</td><td>{p.unit}</td>
-                  <td>{p.defaultCostPrice}</td><td>{p.defaultSellPrice}</td>
-                </tr>
-              ))}
+              {products.map(p => {
+                const isEditing = editingId === p.id
+                return (
+                  <tr key={p.id}>
+                    {isEditing ? (
+                      <>
+                        <td><input style={{ marginBottom: 0, width: 120 }} value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} /></td>
+                        <td><input style={{ marginBottom: 0, width: 100 }} value={editForm.category} onChange={e => setEditForm({ ...editForm, category: e.target.value })} /></td>
+                        <td>
+                          <select style={{ marginBottom: 0 }} value={editForm.unit} onChange={e => setEditForm({ ...editForm, unit: e.target.value })}>
+                            <option value="pcs">pcs</option>
+                            <option value="kg">kg</option>
+                            <option value="pack">pack</option>
+                            <option value="porsi">porsi</option>
+                          </select>
+                        </td>
+                        <td><input type="number" style={{ marginBottom: 0, width: 100 }} value={editForm.defaultCostPrice} onChange={e => setEditForm({ ...editForm, defaultCostPrice: e.target.value })} /></td>
+                        <td><input type="number" style={{ marginBottom: 0, width: 100 }} value={editForm.defaultSellPrice} onChange={e => setEditForm({ ...editForm, defaultSellPrice: e.target.value })} /></td>
+                        <td style={{ display: 'flex', gap: 6 }}>
+                          <button onClick={() => saveEdit(p)}>Simpan</button>
+                          <button className="secondary" onClick={() => setEditingId(null)}>Batal</button>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td>{p.name}</td><td>{p.category}</td><td>{p.unit}</td>
+                        <td>{formatRupiah(p.defaultCostPrice)}</td><td>{formatRupiah(p.defaultSellPrice)}</td>
+                        <td style={{ display: 'flex', gap: 6 }}>
+                          <button className="secondary" onClick={() => startEdit(p)}>Edit</button>
+                          <button className="danger" onClick={() => handleDelete(p)}>Hapus</button>
+                        </td>
+                      </>
+                    )}
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

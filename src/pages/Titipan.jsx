@@ -11,7 +11,7 @@ import { todayStr, formatRupiah } from '../lib/dateUtils'
 
 export default function Titipan() {
   const { firebaseUser } = useAuth()
-  const { selectedLapakId, selectedLapak } = useLapak()
+  const { selectedLapakId, selectedLapak, availableLapak } = useLapak()
 
   const [producers, setProducers] = useState([])
   const [producerId, setProducerId] = useState('')
@@ -33,14 +33,25 @@ export default function Titipan() {
   const [confirmBusy, setConfirmBusy] = useState({})
   const [confirmError, setConfirmError] = useState('')
 
+  const [mode, setMode] = useState('single') // 'single' | 'gabungan' — hanya utk daftar/listing, bukan form buat titipan
+
   useEffect(() => {
     if (selectedLapakId) {
       listProducersForLapak(selectedLapakId).then(setProducers)
+    }
+  }, [selectedLapakId])
+
+  useEffect(() => {
+    if (mode === 'single' && selectedLapakId) {
       loadTodayList()
       loadPending()
     }
+    if (mode === 'gabungan' && availableLapak.length > 0) {
+      loadTodayListGabungan()
+      loadPendingGabungan()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedLapakId])
+  }, [selectedLapakId, mode, availableLapak])
 
   useEffect(() => {
     if (producerId) {
@@ -53,9 +64,23 @@ export default function Titipan() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [producerId])
 
+  async function refreshLists() {
+    if (mode === 'gabungan') { await loadPendingGabungan(); await loadTodayListGabungan() }
+    else { await loadPending(); await loadTodayList() }
+  }
+
   async function loadTodayList() {
     const list = await listConsignmentsForLapak(selectedLapakId, todayStr())
     setTodayList(list)
+  }
+
+  async function loadTodayListGabungan() {
+    const all = []
+    for (const l of availableLapak) {
+      const list = await listConsignmentsForLapak(l.id, todayStr())
+      all.push(...list)
+    }
+    setTodayList(all)
   }
 
   async function loadPending() {
@@ -68,6 +93,26 @@ export default function Titipan() {
     setPendingList(withItems)
     const edits = {}
     withItems.forEach(c => {
+      edits[c.id] = {}
+      c.items.forEach(it => {
+        edits[c.id][it.id] = { qtyTitipan: it.qtyTitipan, costPrice: it.costPrice, sellPrice: it.sellPrice }
+      })
+    })
+    setPendingEdits(edits)
+  }
+
+  async function loadPendingGabungan() {
+    const allPending = []
+    for (const l of availableLapak) {
+      const list = await listPendingConsignments(l.id)
+      for (const c of list) {
+        const items = await getConsignmentItems(c.id)
+        allPending.push({ ...c, items })
+      }
+    }
+    setPendingList(allPending)
+    const edits = {}
+    allPending.forEach(c => {
       edits[c.id] = {}
       c.items.forEach(it => {
         edits[c.id][it.id] = { qtyTitipan: it.qtyTitipan, costPrice: it.costPrice, sellPrice: it.sellPrice }
@@ -92,8 +137,7 @@ export default function Titipan() {
         await updateConsignmentItem(consignment.id, item.id, edit)
       }
       await confirmConsignment(consignment.id, firebaseUser.uid)
-      await loadPending()
-      await loadTodayList()
+      await refreshLists()
     } catch (err) {
       setConfirmError(err.message)
     } finally {
@@ -107,7 +151,7 @@ export default function Titipan() {
     setConfirmBusy(prev => ({ ...prev, [consignment.id]: true }))
     try {
       await rejectConsignment(consignment.id, reason, firebaseUser.uid)
-      await loadPending()
+      await refreshLists()
     } catch (err) {
       setConfirmError(err.message)
     } finally {
@@ -179,7 +223,7 @@ export default function Titipan() {
       }
       setRows([])
       await checkExisting()
-      await loadTodayList()
+      await refreshLists()
     } catch (err) {
       setError(err.message)
     } finally {
@@ -235,6 +279,16 @@ export default function Titipan() {
       <div className="page-title">Titipan Harian</div>
       <div className="page-subtitle">Catat produk yang dititipkan produsen pagi ini di {selectedLapak?.name}.</div>
 
+      {availableLapak.length > 1 && (
+        <div className="card">
+          <label>Tampilan Daftar (form buat titipan baru tetap pakai lapak terpilih di atas)</label>
+          <select value={mode} onChange={e => setMode(e.target.value)} style={{ width: 320 }}>
+            <option value="single">Per Lapak ({selectedLapak?.name})</option>
+            <option value="gabungan">Gabungan Semua Lapak ({availableLapak.length} lapak)</option>
+          </select>
+        </div>
+      )}
+
       {confirmError && <div className="error-text">{confirmError}</div>}
 
       {pendingList.length > 0 && (
@@ -248,6 +302,7 @@ export default function Titipan() {
             <div key={c.id} style={{ borderTop: '1px solid #e2e4e9', paddingTop: 12, marginTop: 12 }}>
               <div className="toolbar">
                 <strong>{c.producerName}</strong>
+                {mode === 'gabungan' && <span style={{ fontSize: 12, color: '#6b7280', marginLeft: 8 }}>({c.lapakName})</span>}
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button onClick={() => handleConfirmPending(c)} disabled={confirmBusy[c.id]}>
                     {confirmBusy[c.id] ? 'Memproses...' : 'Konfirmasi'}
@@ -415,18 +470,24 @@ export default function Titipan() {
       </div>
 
       <div className="card">
-        <strong>Semua Titipan Hari Ini di {selectedLapak?.name}</strong>
+        <strong>{mode === 'gabungan' ? `Semua Titipan Hari Ini (Gabungan ${availableLapak.length} Lapak)` : `Semua Titipan Hari Ini di ${selectedLapak?.name}`}</strong>
         <table style={{ marginTop: 8 }}>
-          <thead><tr><th>Produsen</th><th>Status</th><th>Status Bayar</th></tr></thead>
+          <thead>
+            <tr>
+              {mode === 'gabungan' && <th>Lapak</th>}
+              <th>Produsen</th><th>Status</th><th>Status Bayar</th>
+            </tr>
+          </thead>
           <tbody>
             {todayList.map(c => (
               <tr key={c.id}>
+                {mode === 'gabungan' && <td>{c.lapakName}</td>}
                 <td>{c.producerName}</td>
                 <td><span className={`badge ${c.status}`}>{c.status}</span></td>
                 <td><span className={`badge ${c.paymentStatus}`}>{c.paymentStatus}</span></td>
               </tr>
             ))}
-            {todayList.length === 0 && <tr><td colSpan={3} style={{ color: '#9ca3af' }}>Belum ada titipan hari ini.</td></tr>}
+            {todayList.length === 0 && <tr><td colSpan={mode === 'gabungan' ? 4 : 3} style={{ color: '#9ca3af' }}>Belum ada titipan hari ini.</td></tr>}
           </tbody>
         </table>
       </div>
