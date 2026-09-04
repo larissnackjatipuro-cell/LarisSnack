@@ -3,7 +3,9 @@ import {
   listLapak, createLapak, updateLapak, deleteLapak,
   listProducers, createProducer, updateProducer, deleteProducer,
   listProductsByProducer, createProduct, updateProduct, deleteProduct,
+  generateInviteCode,
 } from '../lib/domain'
+import { useAuth } from '../context/AuthContext'
 import { useLapak } from '../context/LapakContext'
 import { formatRupiah } from '../lib/dateUtils'
 
@@ -30,6 +32,7 @@ export default function MasterData() {
  * =======================================================*/
 
 function LapakTab() {
+  const { firebaseUser } = useAuth()
   const [list, setList] = useState([])
   const [name, setName] = useState('')
   const [address, setAddress] = useState('')
@@ -38,9 +41,23 @@ function LapakTab() {
 
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState({ name: '', address: '' })
+  const [generatedCode, setGeneratedCode] = useState(null) // { lapakId, code }
 
   useEffect(() => { load() }, [])
   async function load() { setList(await listLapak()) }
+
+  async function handleGenerateCode(l) {
+    setError('')
+    try {
+      const code = await generateInviteCode({
+        type: 'kasir', lapakId: l.id, lapakName: l.name, lapakIds: [l.id],
+        createdBy: firebaseUser.uid,
+      })
+      setGeneratedCode({ lapakId: l.id, code })
+    } catch (err) {
+      setError(err.message)
+    }
+  }
 
   async function handleAdd(e) {
     e.preventDefault()
@@ -119,8 +136,9 @@ function LapakTab() {
                     <>
                       <td>{l.name}</td>
                       <td>{l.address}</td>
-                      <td style={{ display: 'flex', gap: 6 }}>
+                      <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                         <button className="secondary" onClick={() => startEdit(l)}>Edit</button>
+                        <button className="secondary" onClick={() => handleGenerateCode(l)}>Buat Kode Kasir</button>
                         <button className="danger" onClick={() => handleDelete(l)}>Hapus</button>
                       </td>
                     </>
@@ -130,6 +148,22 @@ function LapakTab() {
             })}
           </tbody>
         </table>
+        {generatedCode && (
+          <div style={{ marginTop: 14, padding: 12, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8 }}>
+            Kode undangan kasir untuk <strong>{list.find(l => l.id === generatedCode.lapakId)?.name}</strong>:{' '}
+            <span style={{ fontFamily: 'monospace', fontSize: 16, fontWeight: 700, letterSpacing: 1 }}>{generatedCode.code}</span>
+            {' '}
+            <button
+              className="secondary"
+              onClick={() => { navigator.clipboard?.writeText(generatedCode.code); }}
+            >
+              Salin
+            </button>
+            <p className="help-text" style={{ marginTop: 6, marginBottom: 0 }}>
+              Bagikan kode ini ke calon kasir. Kode hanya bisa dipakai SATU KALI untuk mendaftar di halaman "Daftar".
+            </p>
+          </div>
+        )}
       </div>
     </>
   )
@@ -140,6 +174,7 @@ function LapakTab() {
  * =======================================================*/
 
 function ProdusenTab() {
+  const { firebaseUser } = useAuth()
   const { allLapak } = useLapak()
   const [list, setList] = useState([])
   const [name, setName] = useState('')
@@ -151,9 +186,27 @@ function ProdusenTab() {
 
   const [editingId, setEditingId] = useState(null)
   const [editForm, setEditForm] = useState({ name: '', phone: '', address: '' })
+  const [generatedCode, setGeneratedCode] = useState(null) // { producerId, code }
 
   useEffect(() => { load() }, [])
   async function load() { setList(await listProducers()) }
+
+  async function handleGenerateCode(p) {
+    setError('')
+    if (!p.lapakIds || p.lapakIds.length === 0) {
+      setError(`Produsen "${p.name}" belum terdaftar ke lapak manapun. Centang minimal 1 lapak dulu sebelum buat kode.`)
+      return
+    }
+    try {
+      const code = await generateInviteCode({
+        type: 'produsen', producerId: p.id, producerName: p.name, lapakIds: p.lapakIds,
+        createdBy: firebaseUser.uid,
+      })
+      setGeneratedCode({ producerId: p.id, code })
+    } catch (err) {
+      setError(err.message)
+    }
+  }
 
   function toggleLapak(id) {
     setSelectedLapak(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
@@ -291,6 +344,7 @@ function ProdusenTab() {
                       <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                         <button className="secondary" onClick={() => startEdit(p)}>Edit</button>
                         <button className="secondary" onClick={() => toggleActive(p)}>{p.isActive ? 'Nonaktifkan' : 'Aktifkan'}</button>
+                        <button className="secondary" onClick={() => handleGenerateCode(p)}>Buat Kode</button>
                         <button className="danger" onClick={() => handleDelete(p)}>Hapus</button>
                       </td>
                     </>
@@ -300,6 +354,17 @@ function ProdusenTab() {
             })}
           </tbody>
         </table>
+        {generatedCode && (
+          <div style={{ marginTop: 14, padding: 12, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8 }}>
+            Kode undangan produsen untuk <strong>{list.find(p => p.id === generatedCode.producerId)?.name}</strong>:{' '}
+            <span style={{ fontFamily: 'monospace', fontSize: 16, fontWeight: 700, letterSpacing: 1 }}>{generatedCode.code}</span>
+            {' '}
+            <button className="secondary" onClick={() => { navigator.clipboard?.writeText(generatedCode.code); }}>Salin</button>
+            <p className="help-text" style={{ marginTop: 6, marginBottom: 0 }}>
+              Bagikan kode ini ke produsen tsb. Kode hanya bisa dipakai SATU KALI untuk mendaftar di halaman "Daftar".
+            </p>
+          </div>
+        )}
       </div>
     </>
   )

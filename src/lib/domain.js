@@ -1,8 +1,9 @@
 import {
-  collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, query, where,
+  collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, deleteDoc, query, where,
   runTransaction, serverTimestamp, orderBy, onSnapshot,
 } from 'firebase/firestore'
-import { db } from './firebase'
+import { createUserWithEmailAndPassword } from 'firebase/auth'
+import { auth, db } from './firebase'
 import { todayStr } from './dateUtils'
 
 /* =========================================================
@@ -544,4 +545,78 @@ export async function getDailyReport(lapakId, date) {
     })
   }
   return rows
+}
+
+/* =========================================================
+ * KODE UNDANGAN & REGISTRASI MANDIRI (Kasir & Produsen)
+ * =======================================================*/
+
+function randomCode(length = 8) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // tanpa 0/O/1/I biar tidak ketuker saat diketik manual
+  let out = ''
+  for (let i = 0; i < length; i++) out += chars[Math.floor(Math.random() * chars.length)]
+  return out
+}
+
+// Admin generate kode dari Master Data. Semua field yang dibutuhkan saat
+// registrasi (lapakIds, producerId, dst) di-SNAPSHOT ke dalam dokumen kode
+// ini saat dibuat — supaya proses registrasi tidak perlu baca koleksi
+// producers/lapak sama sekali (menghindari masalah izin ayam-telur, karena
+// saat registrasi user belum py profil/role apa pun).
+export async function generateInviteCode({ type, lapakId, lapakName, producerId, producerName, lapakIds, createdBy }) {
+  const code = randomCode()
+  await setDoc(doc(db, 'inviteCodes', code), {
+    type, // 'kasir' | 'produsen'
+    lapakId: lapakId || null,
+    lapakName: lapakName || null,
+    producerId: producerId || null,
+    producerName: producerName || null,
+    lapakIds: lapakIds || [],
+    used: false,
+    usedBy: null,
+    usedAt: null,
+    isActive: true,
+    createdBy,
+    createdAt: serverTimestamp(),
+  })
+  return code
+}
+
+export async function revokeInviteCode(code) {
+  return updateDoc(doc(db, 'inviteCodes', code), { isActive: false })
+}
+
+// Alur registrasi mandiri: buat akun Auth dulu (supaya bisa baca Firestore
+// sesuai rules), baca kode undangan, lalu buat dokumen profil users/{uid}
+// yang datanya WAJIB cocok dengan kode (dipaksa lewat Firestore Rules, bukan
+// cuma di sisi klien). Kalau kode tidak valid, akun Auth yang baru dibuat
+// langsung dihapus lagi supaya tidak ada akun "nyangkut" tanpa profil.
+export async function registerWithInviteCode({ name, email, password, code }) {
+  const trimmedCode = code.trim().toUpperCase()
+  const cred = await createUserWithEmailAndPassword(auth, email, password)
+  const uid = cred.user.uid
+
+  try {
+    const codeRef = doc(db, 'inviteCodes', trimmedCode)
+    const codeSnap = await getDoc(codeRef)
+    if (!codeSnap.exists()) throw new Error('Kode undangan tidak ditemukan. Periksa kembali penulisannya.')
+    const codeData = codeSnap.data()
+    if (!codeData.isActive) throw new Error('Kode undangan ini sudah dinonaktifkan oleh admin.')
+    if (codeData.used) throw new Error('Kode undangan ini sudah pernah dipakai orang lain.')
+
+    const profile = {
+      name,
+      email,
+      role: codeData.type,
+      lapakIds: codeData.lapakIds || [],
+      producerId: codeData.producerId || null,
+      inviteCodeUsed: trimmedCode,
+      createdAt: serverTimestamp(),
+    }
+    await setDoc(doc(db, 'users', uid), profile)
+    await updateDoc(codeRef, { used: true, usedBy: uid, usedAt: serverTimestamp() })
+  } catch (err) {
+    await cred.user.delete().catch(() => {})
+    throw err
+  }
 }

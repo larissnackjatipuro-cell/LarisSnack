@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
 export default function Login() {
@@ -39,6 +39,9 @@ export default function Login() {
         <button type="submit" disabled={busy} style={{ width: '100%' }}>
           {busy ? 'Memproses...' : 'Masuk'}
         </button>
+        <p style={{ textAlign: 'center', fontSize: 13, marginTop: 16 }}>
+          Punya kode undangan dari admin? <Link to="/register">Daftar di sini</Link>
+        </p>
       </form>
     </div>
   )

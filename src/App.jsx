@@ -5,6 +5,7 @@ import ProtectedRoute from './components/ProtectedRoute'
 import Layout from './components/Layout'
 
 import Login from './pages/Login'
+import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
 import Titipan from './pages/Titipan'
 import POS from './pages/POS'
@@ -41,6 +42,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
           <Route path="/" element={<Protected><Home /></Protected>} />
           <Route path="/titipan" element={<Protected allowedRoles={STAFF}><Titipan /></Protected>} />
           <Route path="/pos" element={<Protected allowedRoles={STAFF}><POS /></Protected>} />
