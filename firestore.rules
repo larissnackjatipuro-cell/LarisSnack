@@ -30,12 +30,48 @@ service cloud.firestore {
     }
 
     // USERS: hanya boleh baca dokumen milik sendiri (dibutuhkan utk load
-    // profil saat login). Tidak ada write dari client sama sekali — akun
-    // & role dikelola manual lewat Firebase Console, supaya role tidak bisa
-    // diubah sendiri oleh user yang bersangkutan.
+    // profil saat login). TIDAK ADA update/delete dari client sama sekali —
+    // role tidak bisa diubah sendiri setelah dibuat. CREATE diizinkan HANYA
+    // lewat alur registrasi mandiri dengan kode undangan yang valid (lihat
+    // validRegistration di bawah) — ini menggantikan cara lama (dibuat manual
+    // 100% lewat Firebase Console); keduanya tetap bisa dipakai berdampingan.
+    function validRegistration(uid) {
+      let data = request.resource.data;
+      let code = get(/databases/$(database)/documents/inviteCodes/$(data.inviteCodeUsed)).data;
+      return isSignedIn() && request.auth.uid == uid
+        && data.role in ['kasir', 'produsen']
+        && code.used == false
+        && code.isActive == true
+        && code.type == data.role
+        && data.lapakIds == code.lapakIds
+        && (data.role != 'produsen' || data.producerId == code.producerId);
+    }
+
     match /users/{uid} {
       allow read: if isSignedIn() && request.auth.uid == uid;
-      allow write: if false;
+      allow create: if validRegistration(uid);
+      allow update, delete: if false;
+    }
+
+    // INVITE CODES: staf yang generate (create/nonaktifkan). Siapa pun yang
+    // SUDAH login (termasuk user yang baru saja daftar via Firebase Auth,
+    // sebelum py dokumen profil) boleh BACA kode (perlu utk validasi saat
+    // registrasi) dan menandainya "used" — tapi HANYA boleh mengubah field
+    // used/usedBy/usedAt utk uid dirinya sendiri, tidak bisa mengubah field
+    // lain (lapakId, producerId, dst) atau menandai "used" atas nama orang lain.
+    match /inviteCodes/{code} {
+      allow read: if isSignedIn();
+      allow create: if isStaff();
+      allow update: if isStaff()
+        || (isSignedIn()
+            && resource.data.used == false
+            && request.resource.data.used == true
+            && request.resource.data.usedBy == request.auth.uid
+            && request.resource.data.type == resource.data.type
+            && request.resource.data.lapakId == resource.data.lapakId
+            && request.resource.data.producerId == resource.data.producerId
+            && request.resource.data.lapakIds == resource.data.lapakIds);
+      allow delete: if isStaff();
     }
 
     match /lapak/{id} {
@@ -106,6 +142,16 @@ service cloud.firestore {
     // qtySold di consignments/items, cukup utk kebutuhan monitoring mereka,
     // tanpa membuka detail transaksi per pembeli/produsen lain).
     match /salesTransactions/{id} {
+      allow read, write: if isStaff();
+      match /items/{itemId} {
+        allow read, write: if isStaff();
+      }
+    }
+
+    // PESANAN TERJADWAL: murni internal staf lapak, tidak ada kaitan dgn
+    // akses produsen sama sekali (harga jual/cost customer bukan urusan
+    // produsen individual).
+    match /preorders/{id} {
       allow read, write: if isStaff();
       match /items/{itemId} {
         allow read, write: if isStaff();

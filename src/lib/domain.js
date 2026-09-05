@@ -620,3 +620,118 @@ export async function registerWithInviteCode({ name, email, password, code }) {
     throw err
   }
 }
+
+/* =========================================================
+ * PESANAN TERJADWAL (Scheduled Pre-Orders)
+ * =======================================================*/
+
+// Katalog gabungan lintas semua produsen yang terdaftar di satu lapak —
+// dipakai form pesanan supaya kasir tidak perlu pilih produsen dulu (beda
+// dari alur Titipan Harian yang memang harus per-produsen).
+export async function listAllProductsForLapak(lapakId) {
+  const producers = await listProducersForLapak(lapakId)
+  const all = []
+  for (const p of producers) {
+    const products = await listProductsByProducer(p.id)
+    products.forEach(prod => all.push({ ...prod, producerName: p.name }))
+  }
+  return all
+}
+
+export async function createPreorder({
+  lapakId, lapakName, customerName, customerPhone, customerAddress,
+  deliveryDate, paymentStatus, dpAmount, notes, items, createdBy,
+}) {
+  const totalAmount = items.reduce((s, it) => s + Number(it.qty) * Number(it.sellPrice), 0)
+  const totalCost = items.reduce((s, it) => s + Number(it.qty) * Number(it.costPrice), 0)
+  const totalLaba = totalAmount - totalCost
+  const finalDpAmount = paymentStatus === 'lunas' ? totalAmount : Number(dpAmount) || 0
+
+  const orderRef = await addDoc(collection(db, 'preorders'), {
+    lapakId, lapakName,
+    customerName, customerPhone: customerPhone || '', customerAddress: customerAddress || '',
+    orderDate: todayStr(),
+    deliveryDate,
+    paymentStatus, // 'dp' | 'lunas'
+    totalAmount,
+    totalCost,   // denormalized dari item, biar ringkasan omzet/laba cepat tanpa fetch subcollection
+    totalLaba,
+    dpAmount: finalDpAmount,
+    remainingAmount: totalAmount - finalDpAmount,
+    fulfillmentStatus: 'menunggu', // 'menunggu' | 'selesai' | 'batal'
+    notes: notes || '',
+    createdBy,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  })
+
+  for (const it of items) {
+    await addDoc(collection(db, 'preorders', orderRef.id, 'items'), {
+      productId: it.productId,
+      productName: it.productName,
+      qty: Number(it.qty),
+      costPrice: Number(it.costPrice),   // snapshot, dasar hitung laba
+      sellPrice: Number(it.sellPrice),   // snapshot, dasar hitung omzet
+      subtotal: Number(it.qty) * Number(it.sellPrice),
+    })
+  }
+
+  return orderRef.id
+}
+
+export async function listPreordersForLapak(lapakId) {
+  const q = query(collection(db, 'preorders'), where('lapakId', '==', lapakId))
+  const snap = await getDocs(q)
+  const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+  return rows.sort((a, b) => (a.deliveryDate || '').localeCompare(b.deliveryDate || ''))
+}
+
+export async function getPreorderItems(orderId) {
+  const snap = await getDocs(collection(db, 'preorders', orderId, 'items'))
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+}
+
+export async function updatePreorderFulfillment(orderId, fulfillmentStatus) {
+  return updateDoc(doc(db, 'preorders', orderId), { fulfillmentStatus, updatedAt: serverTimestamp() })
+}
+
+export async function markPreorderPaid(orderId) {
+  const ref = doc(db, 'preorders', orderId)
+  const snap = await getDoc(ref)
+  if (!snap.exists()) throw new Error('Pesanan tidak ditemukan.')
+  const data = snap.data()
+  return updateDoc(ref, {
+    paymentStatus: 'lunas',
+    dpAmount: data.totalAmount,
+    remainingAmount: 0,
+    updatedAt: serverTimestamp(),
+  })
+}
+
+export async function deletePreorder(orderId) {
+  return deleteDoc(doc(db, 'preorders', orderId))
+}
+
+// Ringkasan omzet & laba. includeAll=true menghitung SEMUA pesanan yang
+// belum dibatalkan (proyeksi termasuk yang belum jatuh tempo kirim);
+// kalau mau hanya yang benar-benar sudah selesai dikirim, filter di
+// pemanggil berdasarkan fulfillmentStatus sebelum hitung total sendiri.
+export function summarizePreorders(preorders) {
+  const active = preorders.filter(o => o.fulfillmentStatus !== 'batal')
+  const selesai = active.filter(o => o.fulfillmentStatus === 'selesai')
+  const menunggu = active.filter(o => o.fulfillmentStatus === 'menunggu')
+
+  const sum = (list, field) => list.reduce((s, o) => s + Number(o[field] || 0), 0)
+
+  return {
+    totalOmzetSemua: sum(active, 'totalAmount'),
+    totalOmzetSelesai: sum(selesai, 'totalAmount'),
+    totalOmzetMenunggu: sum(menunggu, 'totalAmount'),
+    totalLabaSemua: sum(active, 'totalLaba'),
+    totalLabaSelesai: sum(selesai, 'totalLaba'),
+    jumlahPesanan: active.length,
+    jumlahLunas: active.filter(o => o.paymentStatus === 'lunas').length,
+    jumlahDp: active.filter(o => o.paymentStatus === 'dp').length,
+    totalDpBelumLunas: sum(active.filter(o => o.paymentStatus === 'dp'), 'remainingAmount'),
+  }
+}

@@ -9,6 +9,7 @@ const staffNavItems = [
   { to: '/pos', label: 'Transaksi Penjualan' },
   { to: '/tutup-hari', label: 'Tutup Hari & Retur' },
   { to: '/pembayaran', label: 'Pembayaran Produsen' },
+  { to: '/pesanan-terjadwal', label: 'Pesanan Terjadwal' },
   { to: '/laporan', label: 'Laporan' },
   { to: '/master-data', label: 'Master Data' },
 ]

@@ -14,6 +14,7 @@ import Pembayaran from './pages/Pembayaran'
 import Laporan from './pages/Laporan'
 import MasterData from './pages/MasterData'
 import TitipanSaya from './pages/TitipanSaya'
+import PesananTerjadwal from './pages/PesananTerjadwal'
 
 function Protected({ children, allowedRoles }) {
   return (
@@ -50,6 +51,7 @@ export default function App() {
           <Route path="/pembayaran" element={<Protected allowedRoles={STAFF}><Pembayaran /></Protected>} />
           <Route path="/laporan" element={<Protected allowedRoles={STAFF}><Laporan /></Protected>} />
           <Route path="/master-data" element={<Protected allowedRoles={STAFF}><MasterData /></Protected>} />
+          <Route path="/pesanan-terjadwal" element={<Protected allowedRoles={STAFF}><PesananTerjadwal /></Protected>} />
           <Route path="/titipan-saya" element={<Protected allowedRoles={['produsen']}><TitipanSaya /></Protected>} />
         </Routes>
       </BrowserRouter>
