@@ -536,6 +536,7 @@ export async function getDailyReport(lapakId, date) {
       consignmentId: c.id,
       lapakId: c.lapakId,
       lapakName: c.lapakName,
+      producerId: c.producerId,
       producerName: c.producerName,
       status: c.status,
       paymentStatus: c.paymentStatus,

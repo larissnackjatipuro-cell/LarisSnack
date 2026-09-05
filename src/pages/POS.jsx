@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useLapak } from '../context/LapakContext'
 import { listConsignmentsForLapak, getConsignmentItems, recordSale } from '../lib/domain'
@@ -16,15 +16,26 @@ export default function POS() {
   const [availableItems, setAvailableItems] = useState([]) // gabungan semua item dari semua titipan aktif (lapak terpilih)
   const [gabunganItems, setGabunganItems] = useState([]) // lintas semua lapak, read-only
   const [cart, setCart] = useState([]) // { itemId, consignmentId, productName, sellPrice, qty }
+  const [cartOpen, setCartOpen] = useState(false) // panel keranjang expanded/collapsed
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [busy, setBusy] = useState(false)
+  const prevCartLength = useRef(0)
 
   useEffect(() => {
     if (mode === 'single' && selectedLapakId) loadAvailableStock()
     if (mode === 'gabungan' && availableLapak.length > 0) loadGabunganStock()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLapakId, mode, availableLapak])
+
+  // Panel keranjang otomatis terbuka begitu item PERTAMA ditambahkan
+  // (supaya kasir langsung lihat konfirmasinya), tapi tidak dipaksa terbuka
+  // lagi tiap kali menambah produk lain — kalau kasir sengaja tutup panel
+  // untuk lihat-lihat produk lain, itu tetap tertutup sampai dibuka manual.
+  useEffect(() => {
+    if (prevCartLength.current === 0 && cart.length > 0) setCartOpen(true)
+    prevCartLength.current = cart.length
+  }, [cart.length])
 
   async function loadAvailableStock() {
     const consignments = await listConsignmentsForLapak(selectedLapakId, todayStr())
@@ -87,6 +98,7 @@ export default function POS() {
   }
 
   const total = cart.reduce((s, c) => s + c.qty * c.priceAtSale, 0)
+  const itemCount = cart.reduce((s, c) => s + c.qty, 0)
 
   async function handleCheckout() {
     setError(''); setSuccess('')
@@ -105,6 +117,7 @@ export default function POS() {
       })
       setSuccess(`Transaksi berhasil disimpan. Total: ${formatRupiah(total)}`)
       setCart([])
+      setCartOpen(false)
       await loadAvailableStock()
     } catch (err) {
       setError(err.message)
@@ -113,8 +126,10 @@ export default function POS() {
     }
   }
 
+  const hasCartItems = cart.length > 0
+
   return (
-    <div>
+    <div style={{ paddingBottom: mode === 'single' && hasCartItems ? (cartOpen ? 340 : 70) : 0 }}>
       <div className="page-title">Transaksi Penjualan</div>
       <div className="page-subtitle">Kasir: {profile?.name} • Lapak: {selectedLapak?.name}</div>
 
@@ -156,57 +171,71 @@ export default function POS() {
           </table>
         </div>
       ) : (
-        <div className="grid-2">
-          <div className="card">
-            <strong>Produk Tersedia Hari Ini</strong>
-            <table style={{ marginTop: 10 }}>
-              <thead><tr><th>Produk</th><th>Produsen</th><th>Harga</th><th>Sisa</th><th></th></tr></thead>
-              <tbody>
-                {availableItems.map(item => (
-                  <tr key={item.itemId}>
-                    <td>{item.productName}</td>
-                    <td style={{ color: '#6b7280', fontSize: 12 }}>{item.producerName}</td>
-                    <td>{formatRupiah(item.sellPrice)}</td>
-                    <td>{item.sisa}</td>
-                    <td><button className="secondary" onClick={() => addToCart(item)}>+ Tambah</button></td>
-                  </tr>
-                ))}
-                {availableItems.length === 0 && (
-                  <tr><td colSpan={5} style={{ color: '#9ca3af' }}>Belum ada stok titipan aktif hari ini.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+        <div className="card">
+          <strong>Produk Tersedia Hari Ini</strong>
+          {error && <div className="error-text" style={{ marginTop: 10 }}>{error}</div>}
+          {success && <div style={{ color: '#16a34a', fontSize: 13, marginTop: 10 }}>{success}</div>}
+          <table style={{ marginTop: 10 }}>
+            <thead><tr><th>Produk</th><th>Produsen</th><th>Harga</th><th>Sisa</th><th></th></tr></thead>
+            <tbody>
+              {availableItems.map(item => (
+                <tr key={item.itemId}>
+                  <td>{item.productName}</td>
+                  <td style={{ color: '#6b7280', fontSize: 12 }}>{item.producerName}</td>
+                  <td>{formatRupiah(item.sellPrice)}</td>
+                  <td>{item.sisa}</td>
+                  <td><button className="secondary" onClick={() => addToCart(item)}>+ Tambah</button></td>
+                </tr>
+              ))}
+              {availableItems.length === 0 && (
+                <tr><td colSpan={5} style={{ color: '#9ca3af' }}>Belum ada stok titipan aktif hari ini.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-          <div className="card">
-            <strong>Keranjang</strong>
-            <table style={{ marginTop: 10 }}>
-              <thead><tr><th>Produk</th><th>Qty</th><th>Subtotal</th><th></th></tr></thead>
-              <tbody>
-                {cart.map(c => (
-                  <tr key={c.itemId}>
-                    <td>{c.productName}</td>
-                    <td>
-                      <input
-                        type="number" min={1} max={c.maxQty} value={c.qty}
-                        style={{ width: 70, marginBottom: 0 }}
-                        onChange={e => updateQty(c.itemId, e.target.value)}
-                      />
-                    </td>
-                    <td>{formatRupiah(c.qty * c.priceAtSale)}</td>
-                    <td><button className="danger" onClick={() => removeFromCart(c.itemId)}>x</button></td>
-                  </tr>
-                ))}
-                {cart.length === 0 && <tr><td colSpan={4} style={{ color: '#9ca3af' }}>Keranjang masih kosong.</td></tr>}
-              </tbody>
-            </table>
-            <div style={{ marginTop: 16, fontSize: 18, fontWeight: 700 }}>Total: {formatRupiah(total)}</div>
-            {error && <div className="error-text">{error}</div>}
-            {success && <div style={{ color: '#16a34a', fontSize: 13, marginBottom: 10 }}>{success}</div>}
-            <button onClick={handleCheckout} disabled={busy || !cart.length} style={{ marginTop: 10 }}>
-              {busy ? 'Memproses...' : 'Simpan Transaksi'}
-            </button>
-          </div>
+      {/* ================= KERANJANG — panel sticky, TIDAK ikut alur dokumen
+          (position: fixed), jadi tidak pernah menggeser tabel produk di atas
+          walau isi keranjang berubah-ubah. ================= */}
+      {mode === 'single' && hasCartItems && (
+        <div className="cart-sticky-wrap">
+          <button className="cart-summary-bar" onClick={() => setCartOpen(o => !o)}>
+            <span>🛒 {itemCount} item — {formatRupiah(total)}</span>
+            <span>{cartOpen ? 'Sembunyikan ▾' : 'Lihat Keranjang ▴'}</span>
+          </button>
+
+          {cartOpen && (
+            <div className="cart-panel">
+              <div className="cart-panel-body">
+                <table>
+                  <thead><tr><th>Produk</th><th>Qty</th><th>Subtotal</th><th></th></tr></thead>
+                  <tbody>
+                    {cart.map(c => (
+                      <tr key={c.itemId}>
+                        <td>{c.productName}</td>
+                        <td>
+                          <input
+                            type="number" min={1} max={c.maxQty} value={c.qty}
+                            style={{ width: 64, marginBottom: 0 }}
+                            onChange={e => updateQty(c.itemId, e.target.value)}
+                          />
+                        </td>
+                        <td>{formatRupiah(c.qty * c.priceAtSale)}</td>
+                        <td><button className="danger" onClick={() => removeFromCart(c.itemId)}>x</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="cart-panel-footer">
+                <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 8 }}>Total: {formatRupiah(total)}</div>
+                <button onClick={handleCheckout} disabled={busy || !cart.length} style={{ width: '100%' }}>
+                  {busy ? 'Memproses...' : 'Simpan Transaksi'}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

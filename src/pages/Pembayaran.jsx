@@ -48,7 +48,40 @@ export default function Pembayaran() {
     }
   }
 
+  // Di mode gabungan, satu produsen yang supply ke >1 lapak bisa punya
+  // beberapa tagihan terpisah (beda lapak/tanggal) — digabung jadi satu
+  // kartu per produsen supaya totalnya langsung kelihatan, dengan opsi
+  // "Tandai Semua Lunas" sekali klik, tanpa kehilangan rincian per lapak.
+  async function handleMarkPaidGroup(group) {
+    setError('')
+    setBusy(prev => ({ ...prev, [`group-${group.producerId}`]: true }))
+    try {
+      for (const c of group.consignments) {
+        await markConsignmentPaid(c.id, firebaseUser.uid)
+      }
+      await refresh()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(prev => ({ ...prev, [`group-${group.producerId}`]: false }))
+    }
+  }
+
+  function groupByProducer(list) {
+    const map = {}
+    list.forEach(c => {
+      const key = c.producerId
+      if (!map[key]) {
+        map[key] = { producerId: c.producerId, producerName: c.producerName, totalAmount: 0, consignments: [] }
+      }
+      map[key].totalAmount += c.totalAmount
+      map[key].consignments.push(c)
+    })
+    return Object.values(map).sort((a, b) => b.totalAmount - a.totalAmount)
+  }
+
   const grandTotal = unpaid.reduce((s, c) => s + c.totalAmount, 0)
+  const grouped = mode === 'gabungan' ? groupByProducer(unpaid) : null
 
   return (
     <div>
@@ -56,8 +89,8 @@ export default function Pembayaran() {
       <div className="page-subtitle">
         {mode === 'single'
           ? `Daftar titipan yang sudah ditutup (closed) di ${selectedLapak?.name} dan belum dibayar.`
-          : `Daftar titipan yang sudah ditutup dan belum dibayar di semua lapak (${availableLapak.length} lapak).`}
-        {' '}Total di bawah dihitung dari qty terjual × harga titipan (bukan harga jual).
+          : `Digabung per produsen dari semua lapak (${availableLapak.length} lapak) — satu produsen yang supply ke beberapa lapak akan tampil sebagai satu total.`}
+        {' '}Total dihitung dari qty terjual × harga titipan (bukan harga jual).
       </div>
 
       {availableLapak.length > 1 && (
@@ -74,44 +107,82 @@ export default function Pembayaran() {
 
       <div className="stat-grid" style={{ gridTemplateColumns: '1fr' }}>
         <div className="stat-card">
-          <div className="label">Total Kewajiban Belum Dibayar {mode === 'gabungan' ? '(Semua Lapak)' : ''}</div>
+          <div className="label">Total Kewajiban Belum Dibayar {mode === 'gabungan' ? '(Semua Lapak, per Produsen)' : ''}</div>
           <div className="value">{formatRupiah(grandTotal)}</div>
         </div>
       </div>
 
-      {unpaid.map(c => (
-        <div className="card" key={c.id}>
-          <div className="toolbar">
-            <div>
-              <strong>{c.producerName}</strong>
-              {mode === 'gabungan' && <span style={{ fontSize: 12, color: '#6b7280', marginLeft: 8 }}>({c.lapakName})</span>}
-              <div style={{ fontSize: 12, color: '#6b7280' }}>{formatDateDisplay(c.date)}</div>
+      {mode === 'gabungan' ? (
+        <>
+          {grouped.map(group => (
+            <div className="card" key={group.producerId}>
+              <div className="toolbar">
+                <strong>{group.producerName}</strong>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>{formatRupiah(group.totalAmount)}</div>
+                  <button onClick={() => handleMarkPaidGroup(group)} disabled={busy[`group-${group.producerId}`]}>
+                    {busy[`group-${group.producerId}`] ? 'Memproses...' : `Tandai Semua Lunas (${group.consignments.length})`}
+                  </button>
+                </div>
+              </div>
+              <table>
+                <thead><tr><th>Lapak</th><th>Tanggal</th><th>Jumlah</th><th></th></tr></thead>
+                <tbody>
+                  {group.consignments.map(c => (
+                    <tr key={c.id}>
+                      <td>{c.lapakName}</td>
+                      <td>{formatDateDisplay(c.date)}</td>
+                      <td>{formatRupiah(c.totalAmount)}</td>
+                      <td>
+                        <button className="secondary" onClick={() => handleMarkPaid(c.id)} disabled={busy[c.id]}>
+                          {busy[c.id] ? '...' : 'Tandai Lunas'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: 18, fontWeight: 700 }}>{formatRupiah(c.totalAmount)}</div>
-              <button onClick={() => handleMarkPaid(c.id)} disabled={busy[c.id]}>
-                {busy[c.id] ? 'Memproses...' : 'Tandai Lunas'}
-              </button>
+          ))}
+          {grouped.length === 0 && (
+            <div className="card" style={{ color: '#9ca3af' }}>Tidak ada tagihan yang belum dibayar di lapak manapun.</div>
+          )}
+        </>
+      ) : (
+        <>
+          {unpaid.map(c => (
+            <div className="card" key={c.id}>
+              <div className="toolbar">
+                <div>
+                  <strong>{c.producerName}</strong>
+                  <div style={{ fontSize: 12, color: '#6b7280' }}>{formatDateDisplay(c.date)}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>{formatRupiah(c.totalAmount)}</div>
+                  <button onClick={() => handleMarkPaid(c.id)} disabled={busy[c.id]}>
+                    {busy[c.id] ? 'Memproses...' : 'Tandai Lunas'}
+                  </button>
+                </div>
+              </div>
+              <table>
+                <thead><tr><th>Produk</th><th>Qty Terjual</th><th>Harga Titipan</th><th>Subtotal</th></tr></thead>
+                <tbody>
+                  {c.items.filter(it => it.qtySold > 0).map(it => (
+                    <tr key={it.id}>
+                      <td>{it.productName}</td>
+                      <td>{it.qtySold}</td>
+                      <td>{formatRupiah(it.costPrice)}</td>
+                      <td>{formatRupiah(it.qtySold * it.costPrice)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          </div>
-          <table>
-            <thead><tr><th>Produk</th><th>Qty Terjual</th><th>Harga Titipan</th><th>Subtotal</th></tr></thead>
-            <tbody>
-              {c.items.filter(it => it.qtySold > 0).map(it => (
-                <tr key={it.id}>
-                  <td>{it.productName}</td>
-                  <td>{it.qtySold}</td>
-                  <td>{formatRupiah(it.costPrice)}</td>
-                  <td>{formatRupiah(it.qtySold * it.costPrice)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ))}
-
-      {unpaid.length === 0 && (
-        <div className="card" style={{ color: '#9ca3af' }}>Tidak ada tagihan yang belum dibayar.</div>
+          ))}
+          {unpaid.length === 0 && (
+            <div className="card" style={{ color: '#9ca3af' }}>Tidak ada tagihan yang belum dibayar.</div>
+          )}
+        </>
       )}
     </div>
   )
